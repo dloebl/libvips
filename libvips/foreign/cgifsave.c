@@ -119,6 +119,24 @@ typedef VipsForeignSaveClass VipsForeignSaveCgifClass;
 G_DEFINE_ABSTRACT_TYPE( VipsForeignSaveCgif, vips_foreign_save_cgif,
 	VIPS_TYPE_FOREIGN_SAVE );
 
+static char*
+vips_foreign_save_cgif_result2str( cgif_result result )
+{
+	switch( result ) {
+	case CGIF_OK:
+		return ( "GIF stream is valid" );
+	case CGIF_EWRITE:
+		return ( "write failed" );
+	case CGIF_EALLOC:
+		return ( "allocating memory failed" );
+	case CGIF_EINDEX:
+		return ( "invalid index in image data" );
+	case CGIF_ERROR:
+		return ( "something unspecified failed" );
+	}
+	return ( "unknown result code" );
+}
+
 static void
 vips_foreign_save_cgif_dispose( GObject *gobject )
 {
@@ -198,6 +216,7 @@ vips_foreign_save_cgif_write_frame( VipsForeignSaveCgif *cgif )
 	VipsPel *rgb;
 	gint64 sum;
 	double change;
+	cgif_result result;
 	int i;
 	CGIF_FrameConfig frame_config;
 
@@ -327,6 +346,10 @@ vips_foreign_save_cgif_write_frame( VipsForeignSaveCgif *cgif )
 		cgif->cgif_config.pContext = (void *) cgif->target;
 
 		cgif->cgif_context = cgif_newgif( &cgif->cgif_config );
+		if( cgif->cgif_context == NULL ) {
+			vips_error( class->nickname, "%s", _( "failed to create output GIF" ) );
+			return ( -1 );
+		}
 	}
 
 	/* Write frame to cgif.
@@ -403,7 +426,12 @@ vips_foreign_save_cgif_write_frame( VipsForeignSaveCgif *cgif )
 		frame_config.numLocalPaletteEntries = cgif->lp->count;
 	}
 
-	cgif_addframe( cgif->cgif_context, &frame_config );
+	result = cgif_addframe( cgif->cgif_context, &frame_config );
+	if( result != CGIF_OK ) {
+		vips_error( class->nickname, "%s", \
+			vips_foreign_save_cgif_result2str( result ) );
+		return ( -1 );
+	}
 
 	if( !cgif->frame_bytes_head ) {
 		/* Keep head frame_bytes in memory for transparency trick

@@ -513,14 +513,20 @@ vips_foreign_save_cgif_write_frame( VipsForeignSaveCgif *cgif )
 	/* Set up cgif on first use.
 	 */
 	if( !cgif->cgif_context ) {
+		/* Check whether the output GIF should be animated or static:
+		   It's static if there is only one frame to be written.
+		 */
+		int page_height = vips_image_get_page_height( cgif->in );
+		int height = vips_image_get_height( cgif->in );
+		if( page_height != height ) {
+			cgif->cgif_config.attrFlags = CGIF_ATTR_IS_ANIMATED;
+		}
 #ifdef HAVE_CGIF_ATTR_NO_LOOP
-		cgif->cgif_config.attrFlags = 
-			CGIF_ATTR_IS_ANIMATED | 
+		cgif->cgif_config.attrFlags |=
 			(cgif->loop == 1 ? CGIF_ATTR_NO_LOOP : 0);
 		cgif->cgif_config.numLoops = cgif->loop > 1 ? 
 			cgif->loop - 1 : cgif->loop;
 #else /*!HAVE_CGIF_ATTR_NO_LOOP*/
-		cgif->cgif_config.attrFlags = CGIF_ATTR_IS_ANIMATED;
 		cgif->cgif_config.numLoops = cgif->loop;
 #endif/*HAVE_CGIF_ATTR_NO_LOOP*/
 

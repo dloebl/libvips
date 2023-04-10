@@ -280,6 +280,12 @@ if quantisation_package.found()
         if cc.compiles('#include <cgif.h>\nint i = CGIF_FRAME_ATTR_INTERLACED;', name: 'Has CGIF_FRAME_ATTR_INTERLACED', dependencies: cgif_dep)
             cfg_var.set('HAVE_CGIF_FRAME_ATTR_INTERLACED', '1')
         endif
+        # cgif < 0.3.1 had an issue that affected single frame GIFs with transparency:
+        # The "Graphic Control Extension" wasn't written if the IS_ANIMATED flag wasn't present.
+        # Always set the IS_ANIMATED flag for versions below 0.3.1 to avoid this issue.
+        if cgif_dep.version().version_compare('<0.3.1')
+            cfg_var.set('CGIF_ALWAYS_WRITE_ANIMATED', '1')
+        endif
     endif
 endif
 

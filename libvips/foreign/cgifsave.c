@@ -521,6 +521,15 @@ vips_foreign_save_cgif_write_frame( VipsForeignSaveCgif *cgif )
 		if( page_height != height ) {
 			cgif->cgif_config.attrFlags = CGIF_ATTR_IS_ANIMATED;
 		}
+
+/* cgif < 0.3.1 had an issue that affected single frame GIFs with transparency:
+ * The "Graphic Control Extension" wasn't written if the IS_ANIMATED flag wasn't present.
+ * Always set the IS_ANIMATED flag for versions below 0.3.1 to avoid this issue.
+ */
+#ifdef CGIF_ALWAYS_WRITE_ANIMATED
+		cgif->cgif_config.attrFlags = CGIF_ATTR_IS_ANIMATED;
+#endif /*CGIF_ALWAYS_WRITE_ANIMATED*/
+
 #ifdef HAVE_CGIF_ATTR_NO_LOOP
 		cgif->cgif_config.attrFlags |=
 			(cgif->loop == 1 ? CGIF_ATTR_NO_LOOP : 0);

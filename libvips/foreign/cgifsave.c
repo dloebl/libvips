@@ -110,35 +110,10 @@ typedef struct _VipsForeignSaveCgif {
 	int write_y;
 	int page_number;
 
-	/* The current frame as seen by libimagequant.
-	 */
-	VipsQuantiseAttr *attr;
-	VipsQuantiseResult *quantisation_result;
-
-	/* The palette we used for the previous frame. This can be equal to
-	 * quantisation_result if we used the global palette for the previous
-	 * frame, so don't free this.
-	 */
-	VipsQuantiseResult *previous_quantisation_result;
-
-	/* ... and a palette we will need to free.
-	 */
-	VipsQuantiseResult *free_quantisation_result;
-
-	/* The index frame we get libimagequant to generate.
-	 */
-	VipsPel *index;
-
-	/* The previous RGBA frame (needed for transparency trick).
-	 */
-	VipsPel *previous_frame;
-
 	/* The frame as written by libcgif.
 	 */
-	CGIF *cgif_context;
-	CGIF_Config cgif_config;
-
-	int n_palettes_generated;
+	CGIFrgb *cgif_context;
+	CGIFrgb_Config cgif_config;
 
 	/* Deprecated.
 	 */
@@ -156,20 +131,12 @@ vips_foreign_save_cgif_dispose(GObject *gobject)
 	VipsForeignSaveCgif *cgif = (VipsForeignSaveCgif *) gobject;
 
 	g_info("cgifsave: %d frames", cgif->page_number);
-	g_info("cgifsave: %d unique palettes", cgif->n_palettes_generated);
 
-	VIPS_FREEF(cgif_close, cgif->cgif_context);
-
-	VIPS_FREEF(vips__quantise_result_destroy, cgif->quantisation_result);
-	VIPS_FREEF(vips__quantise_result_destroy,
-		cgif->free_quantisation_result);
-	VIPS_FREEF(vips__quantise_attr_destroy, cgif->attr);
+	VIPS_FREEF(cgif_rgb_close, cgif->cgif_context);
 
 	VIPS_UNREF(cgif->target);
 
-	VIPS_FREE(cgif->index);
 	VIPS_FREE(cgif->frame_bytes);
-	VIPS_FREE(cgif->previous_frame);
 
 	G_OBJECT_CLASS(vips_foreign_save_cgif_parent_class)->dispose(gobject);
 }
@@ -408,119 +375,6 @@ vips_foreign_save_cgif_get_rgb_palette(VipsForeignSaveCgif *cgif,
 	}
 }
 
-int
-vips_foreign_save_cgif_pick_quantiser(VipsForeignSaveCgif *cgif,
-	VipsQuantiseImage *image,
-	VipsQuantiseResult **result, gboolean *use_local)
-{
-	VipsObjectClass *class = VIPS_OBJECT_GET_CLASS(cgif);
-
-	VipsQuantiseResult *this_result;
-
-	if (vips__quantise_image_quantize_fixed(image, cgif->attr,
-			&this_result)) {
-		vips_error(class->nickname, "%s", _("quantisation failed"));
-		return -1;
-	}
-
-	/* No global quantiser set up yet? Use this result.
-	 */
-	if (!cgif->quantisation_result) {
-#ifdef DEBUG_VERBOSE
-		printf("vips_foreign_save_cgif_pick_quantiser: "
-			   "global palette from first frame\n");
-#endif /*DEBUG_VERBOSE*/
-
-		cgif->quantisation_result = this_result;
-		cgif->n_palettes_generated += 1;
-
-		*result = this_result;
-		*use_local = FALSE;
-	}
-	else {
-		/* Compare the palette we just made to the palette
-		 * for the previous frame, and to the global palette.
-		 */
-		const VipsQuantisePalette *global = vips__quantise_get_palette(
-			cgif->quantisation_result);
-		const VipsQuantisePalette *this = vips__quantise_get_palette(
-			this_result);
-		const VipsQuantisePalette *prev = vips__quantise_get_palette(
-			cgif->previous_quantisation_result);
-
-		double global_diff =
-			vips__cgif_compare_palettes(this, global);
-		double prev_diff = prev == global
-			? global_diff
-			: vips__cgif_compare_palettes(this, prev);
-
-#ifdef DEBUG_VERBOSE
-		printf("vips_foreign_save_cgif_write_frame: "
-			   "this -> global distance = %g\n",
-			global_diff);
-		printf("vips_foreign_save_cgif_write_frame: "
-			   "this -> prev distance = %g\n",
-			prev_diff);
-		printf("vips_foreign_save_cgif_write_frame: "
-			   "threshold = %g\n",
-			cgif->interpalette_maxerror);
-#endif /*DEBUG_VERBOSE*/
-
-		if (global_diff <= prev_diff &&
-			global_diff < cgif->interpalette_maxerror) {
-			/* Global is good enough, use that.
-			 */
-#ifdef DEBUG_VERBOSE
-			printf("vips_foreign_save_cgif_write_frame: "
-				   "using global palette\n");
-#endif /*DEBUG_VERBOSE*/
-
-			VIPS_FREEF(vips__quantise_result_destroy,
-				this_result);
-			VIPS_FREEF(vips__quantise_result_destroy,
-				cgif->free_quantisation_result);
-
-			*result = cgif->quantisation_result;
-			*use_local = FALSE;
-		}
-		else if (prev_diff < cgif->interpalette_maxerror) {
-			/* Previous is good enough, use that again.
-			 */
-#ifdef DEBUG_VERBOSE
-			printf("vips_foreign_save_cgif_write_frame: "
-				   "using previous palette\n");
-#endif /*DEBUG_VERBOSE*/
-
-			VIPS_FREEF(vips__quantise_result_destroy,
-				this_result);
-
-			*result = cgif->previous_quantisation_result;
-			*use_local = TRUE;
-		}
-		else {
-			/* Nothing else works, we need a new local
-			 * palette.
-			 */
-#ifdef DEBUG_VERBOSE
-			printf("vips_foreign_save_cgif_write_frame: "
-				   "using new local palette\n");
-#endif /*DEBUG_VERBOSE*/
-
-			VIPS_FREEF(vips__quantise_result_destroy,
-				cgif->free_quantisation_result);
-			cgif->free_quantisation_result = this_result;
-			cgif->n_palettes_generated += 1;
-
-			*result = this_result;
-			*use_local = TRUE;
-		}
-	}
-
-	cgif->previous_quantisation_result = *result;
-
-	return 0;
-}
-
 /* We have a complete frame --- write!
  */
 static int
@@ -533,11 +387,8 @@ vips_foreign_save_cgif_write_frame(VipsForeignSaveCgif *cgif)
 	gboolean has_alpha_constraint;
 	VipsPel *restrict p;
 	int i;
-	VipsQuantiseImage *image;
 	gboolean use_local;
-	VipsQuantiseResult *quantisation_result;
-	const VipsQuantisePalette *lp;
-	CGIF_FrameConfig frame_config = { 0 };
+	CGIFrgb_FrameConfig frame_config = { 0 };
 	int n_colours;
 	VipsPel palette_rgb[256 * 3];
 
@@ -545,166 +396,50 @@ vips_foreign_save_cgif_write_frame(VipsForeignSaveCgif *cgif)
 	printf("vips_foreign_save_cgif_write_frame: %d\n", cgif->page_number);
 #endif /*DEBUG_VERBOSE*/
 
-	/* Threshold the alpha channel.
-	 *
-	 * Also, check if the alpha channel of the current frame matches the
-	 * frame before.
-	 *
-	 * If the current frame has an alpha component which is not identical
-	 * to the previous frame we are forced to use the transparency index
-	 * for the alpha channel instead of for the transparency size
-	 * optimization (maxerror).
-	 */
-	p = cgif->frame_bytes;
-	has_alpha_constraint = FALSE;
-	for (i = 0; i < n_pels; i++) {
-		if (p[3] >= 128)
-			p[3] = 255;
-		else {
-			/* Helps the quantiser generate a better palette.
-			 */
-			p[0] = 0;
-			p[1] = 0;
-			p[2] = 0;
-			p[3] = 0;
-
-			if (cgif->page_number > 0 &&
-				cgif->previous_frame[i * 4 + 3])
-				has_alpha_constraint = TRUE;
-		}
-
-		p += 4;
-	}
-
-	/* Set up new frame for libimagequant.
-	 */
-	image = vips__quantise_image_create_rgba(cgif->attr,
-		cgif->frame_bytes, cgif->frame_width, cgif->frame_height, 0);
-
-	if (cgif->mode == VIPS_FOREIGN_SAVE_CGIF_MODE_LOCAL ||
-		!cgif->quantisation_result) {
-		/* Reoptimising each frame, or no global palette set up yet.
-		 */
-		if (vips_foreign_save_cgif_pick_quantiser(cgif,
-				image, &quantisation_result, &use_local))
-			return -1;
-	}
-	else {
-		quantisation_result = cgif->quantisation_result;
-		use_local = FALSE;
-	}
-
-	lp = vips__quantise_get_palette(quantisation_result);
-	/* If there's a transparent pixel, it's always first.
-	 */
-	has_transparency = lp->entries[0].a == 0;
-	n_colours = lp->count;
-	vips_foreign_save_cgif_get_rgb_palette(cgif,
-		quantisation_result, palette_rgb);
-
-	/* Dither frame into @index.
-	 */
-	vips__quantise_set_dithering_level(quantisation_result, cgif->dither);
-	if (vips__quantise_write_remapped_image(quantisation_result,
-			image, cgif->index, n_pels)) {
-		vips_error(class->nickname, "%s", _("dither failed"));
-		VIPS_FREEF(vips__quantise_image_destroy, image);
-		return -1;
-	}
-
-	VIPS_FREEF(vips__quantise_image_destroy, image);
-
 	/* Set up cgif on first use.
 	 */
 	if (!cgif->cgif_context) {
-#ifdef HAVE_CGIF_ATTR_NO_LOOP
-		cgif->cgif_config.attrFlags =
-			CGIF_ATTR_IS_ANIMATED |
-			(cgif->loop == 1 ? CGIF_ATTR_NO_LOOP : 0);
-		cgif->cgif_config.numLoops = cgif->loop > 1
-			? cgif->loop - 1
-			: cgif->loop;
-#else  /*!HAVE_CGIF_ATTR_NO_LOOP*/
-		cgif->cgif_config.attrFlags = CGIF_ATTR_IS_ANIMATED;
+		cgif->cgif_config.attrFlags = 0;
 		cgif->cgif_config.numLoops = cgif->loop;
-#endif /*HAVE_CGIF_ATTR_NO_LOOP*/
 
 		cgif->cgif_config.width = cgif->frame_width;
 		cgif->cgif_config.height = cgif->frame_height;
-		cgif->cgif_config.pGlobalPalette = palette_rgb;
-		cgif->cgif_config.numGlobalPaletteEntries = n_colours;
 		cgif->cgif_config.pWriteFn = vips__cgif_write;
 		cgif->cgif_config.pContext = (void *) cgif->target;
 
-		cgif->cgif_context = cgif_newgif(&cgif->cgif_config);
+		cgif->cgif_context = cgif_rgb_newgif(&cgif->cgif_config);
 	}
 
-	/* Allow cgif to optimise by adding transparency. These optimisations
+	/* TBD: Allow cgif to optimise by adding transparency. These optimisations
 	 * will be automatically disabled if they are not possible.
 	 */
-	frame_config.genFlags =
-		CGIF_FRAME_GEN_USE_TRANSPARENCY |
-		CGIF_FRAME_GEN_USE_DIFF_WINDOW;
+	frame_config.genFlags = 0;
 	frame_config.attrFlags = 0;
 
-	/* Switch per-frame alpha channel on. Index 0 is used for pixels
-	 * with alpha channel.
-	 */
-	if (has_transparency) {
-		frame_config.attrFlags |= CGIF_FRAME_ATTR_HAS_ALPHA;
-		frame_config.transIndex = 0;
-	}
-
-	/* Pixels which are equal to pixels in the previous frame can be made
-	 * transparent, provided no alpha channel constraint is present.
-	 */
-	if (cgif->page_number > 0 &&
-		!has_alpha_constraint) {
-		int trans = has_transparency ? 0 : n_colours;
-
-		vips_foreign_save_cgif_set_transparent(cgif,
-			cgif->previous_frame, cgif->frame_bytes, cgif->index,
-			n_pels, cgif->frame_width, trans);
-
-		if (has_transparency)
-			frame_config.attrFlags &= ~CGIF_FRAME_ATTR_HAS_ALPHA;
-		frame_config.attrFlags |= CGIF_FRAME_ATTR_HAS_SET_TRANS;
-		frame_config.transIndex = trans;
-	}
-	else {
-		/* Take a copy of the RGBA frame.
-		 */
-		memcpy(cgif->previous_frame, cgif->frame_bytes, 4 * n_pels);
-	}
 
 	if (cgif->delay &&
 		cgif->page_number < cgif->delay_length)
 		frame_config.delay =
 			VIPS_RINT(cgif->delay[cgif->page_number] / 10.0);
 
-	/* Attach a local palette, if we need one.
-	 */
-	if (use_local) {
-		frame_config.attrFlags |= CGIF_FRAME_ATTR_USE_LOCAL_TABLE;
-		frame_config.pLocalPalette = palette_rgb;
-		frame_config.numLocalPaletteEntries = n_colours;
-	}
-
 	/* Write an interlaced GIF, if requested.
 	 */
 	if (cgif->interlace) {
-#ifdef HAVE_CGIF_FRAME_ATTR_INTERLACED
-		frame_config.attrFlags |= CGIF_FRAME_ATTR_INTERLACED;
-#else  /*!HAVE_CGIF_FRAME_ATTR_INTERLACED*/
-		g_warning("%s: cgif >= v0.3.0 required for interlaced GIF write",
-			class->nickname);
-#endif /*HAVE_CGIF_FRAME_ATTR_INTERLACED*/
+		frame_config.attrFlags |= CGIF_RGB_FRAME_ATTR_INTERLACED;
+		// TBD g_warning("%s: cgif rgb doesn't support interlaced GIF write", "cgifsave");
+	}
+
+	/* Disable color dithering, if requested.
+	 */
+	if (cgif->dither != 1.0) {
+		frame_config.attrFlags |= CGIF_RGB_FRAME_ATTR_NO_DITHERING;
 	}
 
 	/* Write frame to cgif.
 	 */
-	frame_config.pImageData = cgif->index;
-	cgif_addframe(cgif->cgif_context, &frame_config);
+	frame_config.pImageData = cgif->frame_bytes;
+	frame_config.fmtChan = CGIF_CHAN_FMT_RGBA;
+	cgif_rgb_addframe(cgif->cgif_context, &frame_config);
 
 	return 0;
 }
@@ -794,83 +529,11 @@ vips_foreign_save_cgif_build(VipsObject *object)
 	cgif->frame_bytes = g_malloc0((size_t) 4 *
 		cgif->frame_width * cgif->frame_height);
 
-	/* The previous RGBA frame (for spotting pixels which haven't changed).
-	 */
-	cgif->previous_frame = g_malloc0((size_t) 4 *
-		cgif->frame_width * cgif->frame_height);
-
-	/* The frame index buffer.
-	 */
-	cgif->index = g_malloc0((size_t) cgif->frame_width *
-		cgif->frame_height);
-
-	/* Set up libimagequant.
-	 */
-	cgif->attr = vips__quantise_attr_create();
-	/* Limit the number of colours to 255 so there is always one index
-	 * free for transparency optimization.
-	 */
-	vips__quantise_set_max_colors(cgif->attr,
-		VIPS_MIN(255, 1 << cgif->bitdepth));
-	vips__quantise_set_quality(cgif->attr, 0, 100);
-	vips__quantise_set_speed(cgif->attr, 11 - cgif->effort);
-
-	/* Read the palette on the input if we've not been asked to
-	 * reoptimise.
-	 */
-	if (cgif->reuse &&
-		vips_image_get_typeof(cgif->in, "gif-palette")) {
-		if (vips_image_get_array_int(cgif->in, "gif-palette",
-				&cgif->palette, &cgif->n_colours))
-			return -1;
-
-		if (cgif->n_colours > 256) {
-			vips_error(class->nickname,
-				"%s", _("gif-palette too large"));
-			return -1;
-		}
-	}
-
-	if (cgif->palette) {
-		/* Make a fake image from the input palette, and quantise that.
-		 * Add a zero pixel (transparent) in case the input image has
-		 * transparency.
-		 *
-		 * We know palette fits in 256 entries.
-		 */
-		guint32 fake_image[257];
-		VipsQuantiseImage *image;
-
-		memcpy(fake_image, cgif->palette,
-			cgif->n_colours * sizeof(int));
-		fake_image[cgif->n_colours] = 0;
-		image = vips__quantise_image_create_rgba(cgif->attr,
-			fake_image, cgif->n_colours + 1, 1, 0);
-
-		if (vips__quantise_image_quantize_fixed(image,
-				cgif->attr, &cgif->quantisation_result)) {
-			vips_error(class->nickname,
-				"%s", _("quantisation failed"));
-			return -1;
-		}
-
-		VIPS_FREEF(vips__quantise_image_destroy, image);
-	}
-
-	/* Global mode if there's an input palette, or palette maxerror is
-	 * huge.
-	 */
-	if (cgif->palette ||
-		cgif->interpalette_maxerror > 255)
-		cgif->mode = VIPS_FOREIGN_SAVE_CGIF_MODE_GLOBAL;
-	else
-		cgif->mode = VIPS_FOREIGN_SAVE_CGIF_MODE_LOCAL;
-
 	if (vips_sink_disc(cgif->in,
 			vips_foreign_save_cgif_sink_disc, cgif))
 		return -1;
 
-	VIPS_FREEF(cgif_close, cgif->cgif_context);
+	VIPS_FREEF(cgif_rgb_close, cgif->cgif_context);
 
 	if (vips_target_end(cgif->target))
 		return -1;

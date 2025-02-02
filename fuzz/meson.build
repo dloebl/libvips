@@ -18,18 +18,23 @@ fuzz_progs = [
     'sharpen_fuzzer',
     'thumbnail_fuzzer',
     'smartcrop_fuzzer',
-    'mosaic_fuzzer'
+    'mosaic_fuzzer',
+    'vips_fuzzer'
 ]
 
 if libjpeg_dep.found()
     fuzz_progs += ['jpegsave_file_fuzzer']
 endif
 
+vipsy = declare_dependency(
+    sources: ['../tools/vipsy.c'],
+)
+
 fuzz_execs = []
 foreach fuzz_prog : fuzz_progs
     fuzz_execs += executable(fuzz_prog,
         fuzz_prog + '.cc',
-        dependencies: [libvips_dep, fuzz_deps],
+        dependencies: [libvips_dep, fuzz_deps, vipsy],
         link_args: fuzz_ldflags
     )
 endforeach

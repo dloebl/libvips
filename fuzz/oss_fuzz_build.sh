@@ -71,20 +71,6 @@ cmake \
 cmake --build . --target install
 popd
 
-# libheif
-pushd $SRC/libheif
-cmake \
-  -GNinja \
-  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-  -DCMAKE_INSTALL_PREFIX=$WORK \
-  -DBUILD_SHARED_LIBS=FALSE \
-  -DBUILD_TESTING=FALSE \
-  -DWITH_EXAMPLES=FALSE \
-  -DENABLE_PLUGIN_LOADING=FALSE \
-  .
-cmake --build . --target install
-popd
-
 # libjpeg-turbo
 pushd $SRC/libjpeg-turbo
 cmake \

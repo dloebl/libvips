@@ -71,20 +71,6 @@ cmake \
 cmake --build . --target install
 popd
 
-# libheif
-pushd $SRC/libheif
-cmake \
-  -GNinja \
-  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-  -DCMAKE_INSTALL_PREFIX=$WORK \
-  -DBUILD_SHARED_LIBS=FALSE \
-  -DBUILD_TESTING=FALSE \
-  -DWITH_EXAMPLES=FALSE \
-  -DENABLE_PLUGIN_LOADING=FALSE \
-  .
-cmake --build . --target install
-popd
-
 # libjpeg-turbo
 pushd $SRC/libjpeg-turbo
 cmake \
@@ -238,7 +224,7 @@ popd
 # Disable building man pages, gettext po files, tools, and tests
 meson setup build --prefix=$WORK --libdir=lib --prefer-static --default-library=static --buildtype=debug \
   -Dbackend_max_links=4 -Ddeprecated=false -Dexamples=false -Dman=false -Dpo=false \
-  -Dtests=false -Dtools=false -Dcplusplus=false -Dmodules=disabled -Dfuzz=true \
+  -Dtests=false -Dtools=false -Dcplusplus=false -Dmodules=disabled -Dheif=disabled -Dfuzz=true \
   -Dfuzzing_engine=oss-fuzz -Dfuzzer_ldflags="$LIB_FUZZING_ENGINE" \
   -Dcpp_link_args="$LDFLAGS -Wl,-rpath=\$ORIGIN/lib"
 meson install -C build --tag devel

@@ -837,7 +837,7 @@ vips_foreign_save_jp2k_build(VipsObject *object)
 		break;
 
 	case VIPS_FOREIGN_SUBSAMPLE_ON:
-		jp2k->subsample = TRUE;
+		jp2k->subsample = save->ready->Bands == 3;
 		break;
 
 	case VIPS_FOREIGN_SUBSAMPLE_OFF:
@@ -851,11 +851,6 @@ vips_foreign_save_jp2k_build(VipsObject *object)
 
 	if (jp2k->subsample)
 		jp2k->save_as_ycc = TRUE;
-
-	/* Our rgb->ycc only works for exactly 3 bands.
-	 */
-	jp2k->save_as_ycc = jp2k->save_as_ycc && save->ready->Bands == 3;
-	jp2k->subsample = jp2k->subsample && jp2k->save_as_ycc;
 
 	/* Set parameters for compressor.
 	 */

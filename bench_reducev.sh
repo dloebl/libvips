@@ -70,9 +70,21 @@ BASE_SHA="$(git rev-parse --short "$BASE_REF")"
 BRANCH_SHA="$(git rev-parse --short "$BRANCH_REF")"
 
 # ---- small helpers -------------------------------------------------------
+# Run a build's `vips` with the dynamic loader pointed at *its own* libvips,
+# so we never accidentally load a system-installed libvips (which causes
+# "undefined symbol" errors from a tool/library version mismatch).
+# $1 must be the path to a build's vips binary (build/tools/vips).
+vrun() {
+	local vips="$1"; shift
+	local ld; ld="$(cd "$(dirname "$vips")/../libvips" && pwd)"
+	LD_LIBRARY_PATH="$ld${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+	DYLD_LIBRARY_PATH="$ld${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}" \
+		"$vips" "$@"
+}
+
 # run a command; on failure show the real stderr and a helpful hint, then exit.
 must() {
-	if ! "$@" 2>"$WORK_ROOT/last.err"; then
+	if ! vrun "$@" 2>"$WORK_ROOT/last.err"; then
 		echo "" >&2
 		echo "ERROR: command failed:" >&2
 		printf '   ' >&2; printf '%q ' "$@" >&2; echo >&2
@@ -107,7 +119,7 @@ ncpu() {
 bench() {
 	local best="" t i
 	for ((i = 0; i < REPS; i++)); do
-		t=$( { TIMEFORMAT=%R; time "$@" >/dev/null 2>&1; } 2>&1 )
+		t=$( { TIMEFORMAT=%R; time vrun "$@" >/dev/null 2>&1; } 2>&1 )
 		best=$(awk -v a="$t" -v b="$best" \
 			'BEGIN { if (b == "" || a + 0 < b + 0) print a; else print b }')
 	done
@@ -158,7 +170,7 @@ echo "----------------------------------------------------------------"
 BASE_VIPS="$(build_variant "$BASE_REF" base)"
 BRANCH_VIPS="$(build_variant "$BRANCH_REF" branch)"
 
-echo " base   cc: $("$BASE_VIPS" --version 2>/dev/null | head -1)" >&2
+echo " base   cc: $(vrun "$BASE_VIPS" --version 2>/dev/null | head -1)" >&2
 
 # ---- test data (generated once, with the base build) ---------------------
 DATA="$WORK_ROOT/data"

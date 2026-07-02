@@ -24,7 +24,7 @@
 # Tunables (env vars, with defaults):
 #   BASE_REF   auto  commit/ref for the "before" build (default: fork point)
 #   BRANCH_REF HEAD  commit/ref for the "after" build
-#   W, H       16000 test image dimensions
+#   W, H       8000  test image dimensions (data/ ~1.8 GB)
 #   VSHRINK    3.0   vertical shrink factor for the isolated reducev test
 #   SCALE      0.2   scale factor for the resize test (5x downscale)
 #   KERNEL     lanczos3  resample kernel
@@ -37,8 +37,8 @@ trap 'rc=$?; echo "" >&2; echo "ERROR: aborted at line $LINENO (exit $rc). See m
 
 # ---- config --------------------------------------------------------------
 BRANCH_REF="${BRANCH_REF:-HEAD}"
-W="${W:-16000}"
-H="${H:-16000}"
+W="${W:-8000}"
+H="${H:-8000}"
 VSHRINK="${VSHRINK:-3.0}"
 SCALE="${SCALE:-0.2}"
 KERNEL="${KERNEL:-lanczos3}"

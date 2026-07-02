@@ -82,6 +82,40 @@ vrun() {
 		"$vips" "$@"
 }
 
+# After building, prove the tool actually loads its *own* libvips. If it
+# instead resolves an older system libvips, `vips --version` fails with an
+# undefined-symbol error - catch that here with a precise diagnostic.
+preflight() {
+	local vips="$1" label="$2" libdir
+	libdir="$(cd "$(dirname "$vips")/../libvips" 2>/dev/null && pwd || true)"
+	if vrun "$vips" --version >/dev/null 2>"$WORK_ROOT/last.err"; then
+		return 0
+	fi
+	echo "" >&2
+	echo "ERROR: the $label build cannot load its own libvips." >&2
+	echo "--- stderr ---------------------------------------------" >&2
+	cat "$WORK_ROOT/last.err" >&2
+	echo "--------------------------------------------------------" >&2
+	echo "  tool          : $vips" >&2
+	echo "  expected lib  : $libdir" >&2
+	if [ -n "$libdir" ]; then
+		ls -1 "$libdir"/libvips.so* "$libdir"/libvips*.dylib 2>/dev/null |
+			sed 's/^/      have: /' >&2 ||
+			echo "      have: (no libvips shared object in that dir!)" >&2
+	fi
+	if command -v ldd >/dev/null 2>&1; then
+		echo "  ldd resolves libvips to:" >&2
+		LD_LIBRARY_PATH="$libdir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+			ldd "$vips" 2>/dev/null | grep -i vips | sed 's/^/      /' >&2 ||
+			echo "      (none)" >&2
+	fi
+	echo "  hint: if ldd points at /usr or /lib, an old system libvips is" >&2
+	echo "        shadowing the build. This script forces LD_LIBRARY_PATH," >&2
+	echo "        so this usually means the build's libvips.so is missing" >&2
+	echo "        or in an unexpected dir - paste this output back." >&2
+	exit 1
+}
+
 # run a command; on failure show the real stderr and a helpful hint, then exit.
 must() {
 	if ! vrun "$@" 2>"$WORK_ROOT/last.err"; then
@@ -170,7 +204,10 @@ echo "----------------------------------------------------------------"
 BASE_VIPS="$(build_variant "$BASE_REF" base)"
 BRANCH_VIPS="$(build_variant "$BRANCH_REF" branch)"
 
+preflight "$BASE_VIPS" base
+preflight "$BRANCH_VIPS" branch
 echo " base   cc: $(vrun "$BASE_VIPS" --version 2>/dev/null | head -1)" >&2
+echo " branch cc: $(vrun "$BRANCH_VIPS" --version 2>/dev/null | head -1)" >&2
 
 # ---- test data (generated once, with the base build) ---------------------
 DATA="$WORK_ROOT/data"

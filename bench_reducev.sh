@@ -24,7 +24,7 @@
 # Tunables (env vars, with defaults):
 #   BASE_REF   auto  commit/ref for the "before" build (default: fork point)
 #   BRANCH_REF HEAD  commit/ref for the "after" build
-#   W, H       8000  test image dimensions
+#   W, H       16000 test image dimensions
 #   VSHRINK    3.0   vertical shrink factor for the isolated reducev test
 #   SCALE      0.2   scale factor for the resize test (5x downscale)
 #   KERNEL     lanczos3  resample kernel
@@ -33,11 +33,12 @@
 #   REBUILD    0     set to 1 to rebuild even if a build already exists
 
 set -euo pipefail
+trap 'rc=$?; echo "" >&2; echo "ERROR: aborted at line $LINENO (exit $rc). See message above." >&2' ERR
 
 # ---- config --------------------------------------------------------------
 BRANCH_REF="${BRANCH_REF:-HEAD}"
-W="${W:-8000}"
-H="${H:-8000}"
+W="${W:-16000}"
+H="${H:-16000}"
 VSHRINK="${VSHRINK:-3.0}"
 SCALE="${SCALE:-0.2}"
 KERNEL="${KERNEL:-lanczos3}"
@@ -69,6 +70,24 @@ BASE_SHA="$(git rev-parse --short "$BASE_REF")"
 BRANCH_SHA="$(git rev-parse --short "$BRANCH_REF")"
 
 # ---- small helpers -------------------------------------------------------
+# run a command; on failure show the real stderr and a helpful hint, then exit.
+must() {
+	if ! "$@" 2>"$WORK_ROOT/last.err"; then
+		echo "" >&2
+		echo "ERROR: command failed:" >&2
+		printf '   ' >&2; printf '%q ' "$@" >&2; echo >&2
+		echo "--- stderr ---------------------------------------------" >&2
+		cat "$WORK_ROOT/last.err" >&2
+		echo "--------------------------------------------------------" >&2
+		echo "hint: if this says 'No space left on device', WORK_ROOT is" >&2
+		echo "      on a small disk (e.g. a tmpfs /tmp). Re-run pointing" >&2
+		echo "      it at a bigger volume, e.g.:" >&2
+		echo "          WORK_ROOT=\$HOME/vips-bench $0" >&2
+		echo "      or use a smaller image, e.g.  W=4000 H=4000 $0" >&2
+		exit 1
+	fi
+}
+
 sha() { # bit-exact hash, portable
 	if command -v sha256sum >/dev/null 2>&1; then
 		sha256sum "$1" | awk '{print $1}'
@@ -132,6 +151,10 @@ echo " host   : $(uname -m) $(uname -s), $(ncpu) logical CPUs"
 echo " flags  : buildtype=release  CFLAGS/CXXFLAGS='$CF'"
 echo "----------------------------------------------------------------"
 
+mkdir -p "$WORK_ROOT"
+echo " disk   : $(df -h "$WORK_ROOT" 2>/dev/null | awk 'NR==2 {print $4" free on "$6}')" 
+echo "----------------------------------------------------------------"
+
 BASE_VIPS="$(build_variant "$BASE_REF" base)"
 BRANCH_VIPS="$(build_variant "$BRANCH_REF" branch)"
 
@@ -140,15 +163,15 @@ echo " base   cc: $("$BASE_VIPS" --version 2>/dev/null | head -1)" >&2
 # ---- test data (generated once, with the base build) ---------------------
 DATA="$WORK_ROOT/data"
 mkdir -p "$DATA"
-if [ "$REBUILD" = 1 ] || [ ! -f "$DATA/float.v" ]; then
+if [ "$REBUILD" = 1 ] || [ ! -f "$DATA/complex.v" ]; then
 	echo ">>> generating ${W}x${H} test images in $DATA" >&2
-	"$BASE_VIPS" gaussnoise "$DATA/base.v" "$W" "$H" >/dev/null 2>&1
+	must "$BASE_VIPS" gaussnoise "$DATA/base.v" "$W" "$H"
 	for fmt in uchar ushort short float double; do
-		"$BASE_VIPS" cast "$DATA/base.v" "$DATA/$fmt.v" "$fmt" >/dev/null 2>&1
+		must "$BASE_VIPS" cast "$DATA/base.v" "$DATA/$fmt.v" "$fmt"
 	done
 	# complex = two float bands joined
-	"$BASE_VIPS" complexform "$DATA/float.v" "$DATA/float.v" \
-		"$DATA/complex.v" >/dev/null 2>&1
+	must "$BASE_VIPS" complexform "$DATA/float.v" "$DATA/float.v" "$DATA/complex.v"
+	echo ">>> test images ready" >&2
 fi
 
 OUT="$WORK_ROOT/out"
@@ -164,9 +187,12 @@ export VIPS_CONCURRENCY=1
 for fmt in float complex ushort short double; do
 	src="$DATA/$fmt.v"
 	[ -f "$src" ] || continue
+	# checked reference runs (surface real errors + produce outputs to diff)
+	must "$BASE_VIPS"   reducev "$src" "$OUT/rb_$fmt.v" "$VSHRINK" --kernel "$KERNEL"
+	must "$BRANCH_VIPS" reducev "$src" "$OUT/rk_$fmt.v" "$VSHRINK" --kernel "$KERNEL"
+	exact=$([ "$(sha "$OUT/rb_$fmt.v")" = "$(sha "$OUT/rk_$fmt.v")" ] && echo yes || echo NO)
 	b=$(bench "$BASE_VIPS"   reducev "$src" "$OUT/rb_$fmt.v" "$VSHRINK" --kernel "$KERNEL")
 	k=$(bench "$BRANCH_VIPS" reducev "$src" "$OUT/rk_$fmt.v" "$VSHRINK" --kernel "$KERNEL")
-	exact=$([ "$(sha "$OUT/rb_$fmt.v")" = "$(sha "$OUT/rk_$fmt.v")" ] && echo yes || echo NO)
 	printf "%-9s %9ss %9ss %8sx  %s\n" "$fmt" "$b" "$k" "$(speedup "$b" "$k")" "$exact"
 done
 unset VIPS_CONCURRENCY
@@ -180,9 +206,11 @@ printf "%-9s %10s %10s %9s  %s\n" format base branch speedup bit-exact
 for fmt in uchar ushort float; do
 	src="$DATA/$fmt.v"
 	[ -f "$src" ] || continue
+	must "$BASE_VIPS"   resize "$src" "$OUT/zb_$fmt.v" "$SCALE" --kernel "$KERNEL"
+	must "$BRANCH_VIPS" resize "$src" "$OUT/zk_$fmt.v" "$SCALE" --kernel "$KERNEL"
+	exact=$([ "$(sha "$OUT/zb_$fmt.v")" = "$(sha "$OUT/zk_$fmt.v")" ] && echo yes || echo NO)
 	b=$(bench "$BASE_VIPS"   resize "$src" "$OUT/zb_$fmt.v" "$SCALE" --kernel "$KERNEL")
 	k=$(bench "$BRANCH_VIPS" resize "$src" "$OUT/zk_$fmt.v" "$SCALE" --kernel "$KERNEL")
-	exact=$([ "$(sha "$OUT/zb_$fmt.v")" = "$(sha "$OUT/zk_$fmt.v")" ] && echo yes || echo NO)
 	printf "%-9s %9ss %9ss %8sx  %s\n" "$fmt" "$b" "$k" "$(speedup "$b" "$k")" "$exact"
 done
 

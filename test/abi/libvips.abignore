@@ -1,0 +1,19 @@
+# libabigail suppressions for check-abi.sh, see
+# https://sourceware.org/libabigail/manual/libabigail-concepts.html#suppression-specifications
+#
+# Every entry here hides a class of changes from the ABI check, so keep it
+# short and say why each one is safe.
+
+# Enums end with a *_LAST member that is not part of the ABI (it is skipped
+# in the GType too). Adding a member before it changes its value, which is
+# fine as long as no other member changes.
+[suppress_type]
+  type_kind = enum
+  changed_enumerators_regexp = .*_LAST$
+
+# Only types declared in the public headers are part of the ABI. The
+# --headers-dir options already drop the rest for types reachable from
+# exported functions, this does the same for --non-reachable-types (eg. the
+# class structs), and hides the noise from C++ template types in Highway.
+[suppress_type]
+  source_location_not_regexp = /include/vips/[^/]+\.h$

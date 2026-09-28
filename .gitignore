@@ -9,6 +9,7 @@
 
 # Build directories
 build/
+build-abi/
 debug/
 release/
 .cache/

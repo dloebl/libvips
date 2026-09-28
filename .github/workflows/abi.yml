@@ -1,0 +1,87 @@
+name: ABI
+
+# Check that libvips stays binary compatible with the base of the change,
+# see test/abi/check-abi.sh.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: 'Git ref to compare against (default: the parent commit)'
+        required: false
+
+permissions: {}
+
+jobs:
+  abi:
+    name: ABI compatibility
+    runs-on: ubuntu-26.04
+    env:
+      ABI_WORKDIR: ${{ github.workspace }}/build-abi
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install \
+            meson pkgconf abigail-tools \
+            python3-dev python3-venv \
+            libarchive-dev libcfitsio-dev libcgif-dev \
+            libexif-dev libexpat1-dev libffi-dev \
+            libfftw3-dev libheif-dev libheif-plugin-aomenc \
+            libhwy-dev libimagequant-dev libjpeg-dev \
+            libjxl-dev liblcms2-dev libmatio-dev \
+            libnifti-dev libopenexr-dev libopenjp2-7-dev \
+            libopenslide-dev libpango1.0-dev libpng-dev \
+            libpoppler-glib-dev librsvg2-dev libtiff5-dev \
+            libwebp-dev
+
+      - name: Select base
+        env:
+          INPUT_BASE: ${{ inputs.base_ref }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          base=${INPUT_BASE:-${PR_BASE:-$PUSH_BEFORE}}
+          # new branches have no "before", fall back to the parent
+          if [ -z "$base" ] || ! git rev-parse -q --verify "$base^{commit}" >/dev/null; then
+            base=HEAD~1
+          fi
+          test/abi/check-abi.sh prepare "$base"
+
+      - name: Build base
+        id: build-base
+        run: test/abi/check-abi.sh build base
+
+      - name: Build head
+        id: build-head
+        run: test/abi/check-abi.sh build head
+
+      # Run every check, even if an earlier one failed.
+      - name: Check symbols and public types
+        if: ${{ !cancelled() && steps.build-base.outcome == 'success' && steps.build-head.outcome == 'success' }}
+        run: test/abi/check-abi.sh symbols
+
+      - name: Check operations, arguments and enums
+        if: ${{ !cancelled() && steps.build-base.outcome == 'success' && steps.build-head.outcome == 'success' }}
+        run: test/abi/check-abi.sh introspection
+
+      - name: Run base test suite on head libvips
+        if: ${{ !cancelled() && steps.build-base.outcome == 'success' && steps.build-head.outcome == 'success' }}
+        run: test/abi/check-abi.sh runtime
+
+      - name: Upload reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: abi-reports
+          path: build-abi/reports
+          if-no-files-found: ignore

@@ -1,0 +1,7 @@
+# Extended regular expressions matching lines of vips-introspect output that
+# check-abi.sh should not report as removed or changed, one per line.
+#
+# Every entry accepts a change bindings can see, so say why it is safe, eg.:
+#
+#   # 8.19: foo max raised from 100 to 1000, all old values still valid
+#   ^arg VipsFoo bar type=gint pspec=GParamInt min=0 max=100 default=1 

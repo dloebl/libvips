@@ -1,0 +1,8 @@
+# Tests of the base test suite that check-abi.sh runtime should not run on
+# head, one pytest node id per line, relative to test/test-suite.
+#
+# Every entry accepts a behaviour change callers can see, so say why it is
+# safe, eg.:
+#
+#   # 8.19: svgload dpi= no longer scales, use scale= (#5205)
+#   test_foreign.py::TestForeign::test_svgload

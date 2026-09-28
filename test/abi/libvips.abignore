@@ -11,9 +11,17 @@
   type_kind = enum
   changed_enumerators_regexp = .*_LAST$
 
-# Only types declared in the public headers are part of the ABI. The
-# --headers-dir options already drop the rest for types reachable from
-# exported functions, this does the same for --non-reachable-types (eg. the
-# class structs), and hides the noise from C++ template types in Highway.
+# Only types declared in the public headers are part of the ABI. Checking
+# all types (--non-reachable-types, for the class structs) would otherwise
+# include the internals of every C and C++ file, eg. template types in
+# Highway.
 [suppress_type]
   source_location_not_regexp = /include/vips/[^/]+\.h$
+
+# Rust types, which mostly have no source location. The Rust code in
+# libvips exports nothing (see libvips/meson.build), so its types are never
+# part of the ABI. Rust type names are paths (core::option::Option) or start
+# with &, (, [ or *, C type names never do.
+[suppress_type]
+  file_name_regexp = (^|/)libvips\.so
+  name_regexp = (::|^[&(\[*])

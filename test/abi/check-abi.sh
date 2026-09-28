@@ -20,6 +20,9 @@
 # environment:
 #   ABI_WORKDIR         scratch directory, default build-abi
 #   ABI_MESON_ARGS      extra meson setup args, used for both builds
+#   ABI_BASE_MESON_ARGS extra meson setup args for the base build only
+#   ABI_HEAD_MESON_ARGS extra meson setup args for the head build only, eg.
+#                       -Drust=enabled to check the Rust build against a C base
 #   ABI_PYTEST_ARGS     extra pytest args for the runtime check
 #
 # Accepted differences go in libvips.abignore (abidiff suppressions),
@@ -64,9 +67,16 @@ build() {
 	local name=${1:?build needs base or head}
 	local src builddir prefix
 
+	local extra
 	case $name in
-	base) src=$work/base/src ;;
-	head) src=$top ;;
+	base)
+		src=$work/base/src
+		extra=${ABI_BASE_MESON_ARGS:-}
+		;;
+	head)
+		src=$top
+		extra=${ABI_HEAD_MESON_ARGS:-}
+		;;
 	*) die "build: expected base or head, not $name" ;;
 	esac
 	[ -f "$src/meson.build" ] || die "no source in $src, run prepare first"
@@ -93,7 +103,7 @@ build() {
 		-Dintrospection=disabled \
 		-Ddocs=false \
 		-Dexamples=false \
-		${ABI_MESON_ARGS:-}
+		${ABI_MESON_ARGS:-} $extra
 	meson compile -C "$builddir"
 	meson install -C "$builddir" --quiet
 }
@@ -102,22 +112,15 @@ exported_symbols() {
 	nm -D --defined-only "$1" | awk '{ print $NF }' | LC_ALL=C sort -u
 }
 
-# abidiff two libraries, restricted to the types in the public headers.
-# Added functions and variables are fine. --leaf-changes-only keeps the
-# report readable, and avoids an assertion failure in the default reporter
-# of libabigail 2.9.
+# abidiff two libraries. Added functions and variables are fine.
+# --leaf-changes-only keeps the report readable, and avoids an assertion
+# failure in the default reporter of libabigail 2.9.
 run_abidiff() {
-	local old=$1 new=$2
-	shift 2
-
 	abidiff \
 		--leaf-changes-only \
 		--no-added-syms \
-		--headers-dir1 "$(prefix_of base)/include/vips" \
-		--headers-dir2 "$(prefix_of head)/include/vips" \
-		--drop-private-types \
 		--suppressions "$here/libvips.abignore" \
-		"$@" "$old" "$new"
+		"$@"
 }
 
 show_report() {
@@ -142,8 +145,12 @@ symbols() {
 
 		[ -f "$old" ] && [ -f "$new" ] || die "missing $lib, run build first"
 
-		# Exported functions and variables, and all types they use.
-		run_abidiff "$old" "$new" >"$report" 2>&1 || status=$?
+		# Exported functions and variables, and all public types they use.
+		run_abidiff \
+			--headers-dir1 "$base/include/vips" \
+			--headers-dir2 "$head/include/vips" \
+			--drop-private-types \
+			"$old" "$new" >"$report" 2>&1 || status=$?
 		if [ "$status" -ne 0 ]; then
 			echo "FAIL $lib: abidiff exit status $status" \
 				"(1: error, 4: ABI change, 8: incompatible ABI change)"
@@ -155,8 +162,10 @@ symbols() {
 
 		# Class structs are rarely reachable from exported functions,
 		# so check all types in the headers too. abidiff can't be told
-		# that adding a type is fine, so read the summary.
-		run_abidiff "$old" "$new" --non-reachable-types \
+		# that adding a type is fine, so read the summary. The
+		# suppressions select the public types: --headers-dir trips an
+		# assertion in libabigail 2.9 on Rust debug info here.
+		run_abidiff --non-reachable-types "$old" "$new" \
 			>"$unreachable" 2>&1 || unreachable_status=$?
 		counts=$(sed -nE 's/^Unreachable types summary: ([0-9]+) removed.*, ([0-9]+) changed.*/\1 \2/p' \
 			"$unreachable")

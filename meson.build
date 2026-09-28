@@ -115,27 +115,37 @@ endif
 
 module_dir = lib_dir / 'vips-modules-@0@.@1@'.format(version_major, version_minor)
 
-# Experimental: operations implemented in Rust (e.g. bmpload).
+# Experimental: operations implemented in Rust (e.g. bmpload), see
+# libvips/rust/README.md.
+rust_msrv = '1.77'
 rust_enabled = false
 if not get_option('rust').disabled()
-    if meson.version().version_compare('>=1.3')
-        rust_enabled = add_languages('rust', native: false,
-            required: get_option('rust').enabled())
-    elif get_option('rust').enabled()
-        error('-Drust=enabled requires meson >= 1.3')
+    rust_required = get_option('rust').enabled()
+    if meson.version().version_compare('<1.3')
+        if rust_required
+            error('-Drust=enabled requires meson >= 1.3')
+        endif
+    elif add_languages('rust', native: false, required: rust_required)
+        rustc = meson.get_compiler('rust')
+        bindgen = find_program('bindgen', required: rust_required)
+        if rustc.version().version_compare('<' + rust_msrv)
+            if rust_required
+                error('Rust support needs rustc >= @0@, found @1@'.format(rust_msrv, rustc.version()))
+            endif
+            message('Disabling Rust support, rustc @0@ < @1@'.format(rustc.version(), rust_msrv))
+        elif bindgen.found()
+            rust_enabled = true
+        endif
     endif
 endif
-
-# Static libraries of Rust operations, linked into libvips.
-libvips_rust_libs = []
 
 cfg_var = configuration_data()
 cfg_var.set_quoted('G_LOG_DOMAIN', 'VIPS')
 
 cfg_var.set('ENABLE_MODULES', modules_enabled)
 
-# The Rust BMP loader.
-cfg_var.set('HAVE_BMP', rust_enabled)
+# Operations implemented in Rust.
+cfg_var.set('HAVE_RUST', rust_enabled)
 
 # Detect and set symbol visibility
 if get_option('default_library') == 'shared' and host_os in ['windows', 'cygwin']
@@ -728,6 +738,7 @@ build_summary = {
      'enable PPM load/save': [get_option('ppm')],
      'enable QOI load/save': [get_option('qoi')],
      'enable GIF load': [get_option('nsgif')],
+     'enable Rust operations': [rust_enabled],
     },
 }
 build_features = {

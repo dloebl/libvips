@@ -1204,6 +1204,16 @@ class TestForeign:
             assert im.interpretation == "srgb"
 
         self.file_loader("bmpload", SUNSET_BMP_FILE, bmp_valid)
+        self.buffer_loader("bmpload_buffer", SUNSET_BMP_FILE, bmp_valid)
+
+        # stride padding: 1419 * 3 is not a multiple of 4
+        im = pyvips.Image.bmpload(BMP_FILE)
+        assert im.width == 1419
+        assert im.height == 1001
+
+        # only 24-bit uncompressed is supported
+        with pytest.raises(pyvips.error.Error):
+            pyvips.Image.bmpload_buffer(b"BM" + bytes(60))
 
     @skip_if_no("magickload")
     def test_magickload(self):

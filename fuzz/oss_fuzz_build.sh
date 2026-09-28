@@ -254,12 +254,26 @@ elif [ "$SANITIZER" = "thread" ]; then
   TSAN_ARGS="--force-fallback-for=glib -Dglib:glib_debug=disabled -Dglib:nls=disabled -Dglib:sysprof=disabled -Dglib:tests=false"
 fi
 
+# Operations implemented in Rust (see libvips/rust/README.md) need rustc and
+# bindgen, eg. from the base-builder-rust image. With a nightly rustc (as in
+# OSS-Fuzz), the Rust code is instrumented for ASan too. MSan and TSan need
+# an instrumented Rust standard library, so Rust is disabled for them.
+RUST_ARGS=(-Drust=disabled)
+if command -v rustc >/dev/null && command -v bindgen >/dev/null &&
+  [ "$SANITIZER" != "memory" ] && [ "$SANITIZER" != "thread" ]; then
+  RUST_ARGS=(-Drust=enabled)
+  if [ "$SANITIZER" = "address" ] && rustc --version | grep -q nightly; then
+    RUST_ARGS+=("-Drust_args=-Zsanitizer=address -Cunsafe-allow-abi-mismatch=sanitizer")
+  fi
+fi
+
 # libvips
 # Disable building man pages, gettext po files, tools, and tests
 meson setup build --prefix=$WORK --libdir=lib --prefer-static --default-library=static --buildtype=debug $TSAN_ARGS \
   -Dbackend_max_links=4 -Dexamples=false -Dman=false -Dpo=false \
   -Dtests=false -Dtools=false -Dcplusplus=false -Dmodules=disabled -Dfuzz=true \
   -Dfuzzing_engine=oss-fuzz -Dfuzzer_ldflags="$LIB_FUZZING_ENGINE" \
+  "${RUST_ARGS[@]}" \
   -Dcpp_link_args="$LDFLAGS -Wl,-rpath=\$ORIGIN/lib"
 meson install -C build --tag devel
 

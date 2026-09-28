@@ -16,10 +16,17 @@ permissions: {}
 
 jobs:
   abi:
-    name: ABI compatibility
+    name: ABI compatibility${{ matrix.rust && ' (head with Rust)' || '' }}
     runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # with Rust, the base is still built without: enabling Rust must
+        # not change the ABI either
+        rust: [false, true]
     env:
       ABI_WORKDIR: ${{ github.workspace }}/build-abi
+      ABI_HEAD_MESON_ARGS: ${{ matrix.rust && '-Drust=enabled' || '' }}
 
     steps:
       - name: Checkout code
@@ -42,7 +49,8 @@ jobs:
             libnifti-dev libopenexr-dev libopenjp2-7-dev \
             libopenslide-dev libpango1.0-dev libpng-dev \
             libpoppler-glib-dev librsvg2-dev libtiff5-dev \
-            libwebp-dev
+            libwebp-dev \
+            ${{ matrix.rust && 'rustc bindgen' || '' }}
 
       - name: Select base
         env:
@@ -82,6 +90,6 @@ jobs:
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
-          name: abi-reports
+          name: abi-reports${{ matrix.rust && '-rust' || '' }}
           path: build-abi/reports
           if-no-files-found: ignore

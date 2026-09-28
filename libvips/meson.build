@@ -21,17 +21,57 @@ subdir('morphology')
 subdir('mosaicing')
 subdir('create')
 
+# All Rust code goes into one C-ABI static library, so there is a single
+# copy of the Rust standard library. Its symbols are hidden in the shared
+# libvips: the exports stay exactly the VIPS_API functions of the C headers.
+libvips_link_with = []
+libvips_link_args = nodelete_link_args
+libvips_link_depends = []
+if rust_enabled
+    vips_rust_staticlib = static_library('vips_rust',
+        'rust/vips_rust.rs',
+        rust_abi: 'c',
+        # LTO drops most of the Rust standard library
+        rust_args: ['-Clto=true', '-Cembed-bitcode=yes', '-Ccodegen-units=1'],
+        link_with: libvips_rust_crates,
+        override_options: ['rust_std=2021'],
+        # a static libvips needs it at link time
+        install: get_option('default_library') != 'shared',
+    )
+
+    if get_option('default_library') == 'shared' and host_os == 'darwin'
+        libvips_link_args += '-Wl,-load_hidden,' + vips_rust_staticlib.full_path()
+        libvips_link_depends += vips_rust_staticlib
+    else
+        libvips_link_with += vips_rust_staticlib
+        if cc.get_linker_id() not in ['link', 'lld-link', 'ld64']
+            libvips_link_args += '-Wl,--exclude-libs,libvips_rust.a'
+        endif
+    endif
+endif
+
 libvips_lib = library('vips',
     enumtypes,
     link_whole: libvips_components,
-    link_with: libvips_rust_libs,
+    link_with: libvips_link_with,
+    link_depends: libvips_link_depends,
     dependencies: libvips_deps,
     version: library_version,
     darwin_versions: darwin_versions,
     gnu_symbol_visibility: 'hidden',
     install: true,
-    link_args: nodelete_link_args,
+    link_args: libvips_link_args,
 )
+
+# Rust unit tests, run by "meson test". They link their own copy of the
+# crates, which clashes with the one in a static libvips.
+if rust_enabled and get_option('default_library') != 'static'
+    rust_test_deps = [glib_dep, gobject_dep]
+    rust_mod.test('rust-vips', vips_rust_lib,
+        link_with: libvips_lib, dependencies: rust_test_deps)
+    rust_mod.test('rust-foreign', vips_foreign_rust_lib,
+        link_with: libvips_lib, dependencies: rust_test_deps)
+endif
 
 libvips_dep = declare_dependency(
     link_with: libvips_lib,

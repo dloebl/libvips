@@ -1,0 +1,2 @@
+# for clippy, see README.md
+msrv = "1.77"
